@@ -111,14 +111,16 @@ class Matrix {
   Store(/*groupshared*/ T Arr[], uint StartIdx, uint Stride, bool ColMajor);
 
   // Row accesses
-  vector<ElementType, M> GetRow(uint Index);
+  typename hlsl::enable_if<Scope != MatrixScope::Thread, vector<ElementType, M>>::type
+  GetRow(uint Index);
+  
   typename hlsl::enable_if<Scope != MatrixScope::Thread, void>::type
   SetRow(vector<ElementType, M> V, uint Index);
 
   // Element access
   typename hlsl::enable_if<
-      __detail::ComponentTypeTraits<ComponentTy>::IsNativeScalar,
-      ElementType>::type
+      __detail::ComponentTypeTraits<ComponentTy>::IsNativeScalar &&
+      Scope != MatrixScope::Thread, ElementType>::type
   Get(uint2 Index);
 
   typename hlsl::enable_if<
@@ -292,9 +294,9 @@ The following table summarizes the operations supported for each matrix scope:
 | `Matrix::Load(RWByteAddressBuffer)` | ✗ | ✓ |
 | `Matrix::Load(groupshared)` | ✗ | ✓ |
 | `Matrix::Store()` | ✗ | ✓ |
-| `Matrix::GetRow()` | ✓ | ✓ |
+| `Matrix::GetRow()` | ✗ | ✓ |
 | `Matrix::SetRow()` | ✗ | ✓ |
-| `Matrix::Get()` | ✓ | ✓ |
+| `Matrix::Get()` | ✗ | ✓ |
 | `Matrix::Set()` | ✗ | ✓ |
 | `Matrix::MultiplyAccumulate()` | ✗ | ✓ |
 | `Matrix::SumAccumulate()` | ✗ | ✓ |
@@ -591,12 +593,13 @@ not match.
 #### Matrix::GetRow(uint)
 
 ```c++
-vector<ElementType, M> Matrix::GetRow(uint Index);
+typename hlsl::enable_if<Scope != MatrixScope::Thread, vector<ElementType, M>>::type
+Matrix::GetRow(uint Index);
 ```
 
 Returns a row vector of the matrix as a vector of the underlying HLSL native
-element type. If `Index` is out of range for the matrix size the result is a `0`
-filled vector.
+element type. This method is only available for `Wave`-scope matrices.
+If `Index` is out of range for the matrix size the result is a `0` filled vector.
 
 
 #### Matrix::SetRow(vector<ElementType, M>, uint)
@@ -613,15 +616,16 @@ If the `Index` is out of range of the matrix, this is a no-op.
 #### Matrix::Get(uint2)
 
 ```c++
-std::enable_if_t<__detail::ComponentTypeTraits<ComponentTy>::IsNativeScalar,
-                 ElementType>
+typename hlsl::enable_if<
+    __detail::ComponentTypeTraits<ComponentTy>::IsNativeScalar &&
+    Scope != MatrixScope::Thread, ElementType>::type
 Matrix::Get(uint2 Index);
 ```
 
 Accesses a specific component of the matrix using two-dimensional indexing. This
-method is only available if the component type has has native scalar support in
-HLSL. If the `Index` parameter is out-of range for the matrix the result is `0`
-casted to `ElementType`.
+method is only available if the component type has native scalar support in HLSL
+and the matrix scope is `Wave`. If the `Index` parameter is out-of range
+for the matrix the result is `0` casted to `ElementType`.
 
 #### Matrix::Set(ElementType, uint2)
 
@@ -1166,14 +1170,15 @@ class Matrix {
   Store(/*groupshared*/ T Arr[], uint StartIdx, uint Stride, bool ColMajor);
 
   // Row accesses
-  vector<ElementType, M> GetRow(uint Index);
+  typename hlsl::enable_if<Scope != MatrixScope::Thread, vector<ElementType, M>>::type
+  GetRow(uint Index);
   typename hlsl::enable_if<Scope != MatrixScope::Thread, void>::type
   SetRow(vector<ElementType, M> V, uint Index);
 
   // Element access
   typename hlsl::enable_if<
-      __detail::ComponentTypeTraits<ComponentTy>::IsNativeScalar,
-      ElementType>::type
+      __detail::ComponentTypeTraits<ComponentTy>::IsNativeScalar &&
+      Scope != MatrixScope::Thread, ElementType>::type
   Get(uint2 Index);
 
   typename hlsl::enable_if<
