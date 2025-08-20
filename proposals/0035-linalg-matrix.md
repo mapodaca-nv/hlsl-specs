@@ -113,7 +113,7 @@ class Matrix {
   template <MatrixComponentType LHSTy, MatrixComponentType RHSTy, uint K,
             MatrixUse UseLocal = Use>
   typename hlsl::enable_if<Use == MatrixUse::Accumulator &&
-                               Scope == MatrixScope::Wave && UseLocal == Use,
+                               Scope != MatrixScope::Thread && UseLocal == Use,
                            void>::type
   MultiplyAccumulate(const Matrix<LHSTy, M, K, MatrixUse::A, Scope>,
                      const Matrix<RHSTy, K, N, MatrixUse::B, Scope>);
@@ -121,7 +121,7 @@ class Matrix {
   template <MatrixComponentType LHSTy, MatrixComponentType RHSTy, uint K,
             MatrixUse UseLocal = Use>
   typename hlsl::enable_if<Use == MatrixUse::Accumulator &&
-                               Scope == MatrixScope::Wave && UseLocal == Use,
+                               Scope != MatrixScope::Thread && UseLocal == Use,
                            void>::type
   SumAccumulate(const Matrix<LHSTy, M, K, MatrixUse::A, Scope>,
                 const Matrix<RHSTy, K, N, MatrixUse::B, Scope>);
@@ -134,15 +134,15 @@ class Matrix {
 };
 
 template <MatrixComponentType OutTy, MatrixComponentType ATy,
-          MatrixComponentType BTy, uint M, uint N, uint K>
-Matrix<OutTy, M, N, MatrixUse::Accumulator, MatrixScope::Wave>
-Multiply(const Matrix<ATy, M, K, MatrixUse::A, MatrixScope::Wave>,
-         const Matrix<BTy, K, N, MatrixUse::B, MatrixScope::Wave>);
+          MatrixComponentType BTy, uint M, uint N, uint K, MatrixScope Scope>
+Matrix<OutTy, M, N, MatrixUse::Accumulator, Scope>
+Multiply(const Matrix<ATy, M, K, MatrixUse::A, Scope>,
+         const Matrix<BTy, K, N, MatrixUse::B, Scope>);
 
 template <MatrixComponentType T, uint M, uint N, uint K>
-Matrix<T, M, N, MatrixUse::Accumulator, MatrixScope::Wave>
-Multiply(const Matrix<T, M, K, MatrixUse::A, MatrixScope::Wave>,
-         const Matrix<T, K, N, MatrixUse::B, MatrixScope::Wave>);
+Matrix<T, M, N, MatrixUse::Accumulator, Scope>
+Multiply(const Matrix<T, M, K, MatrixUse::A, Scope>,
+         const Matrix<T, K, N, MatrixUse::B, Scope>);
 
 // Cooperative Vector Replacement API
 // Cooperative Vector operates on per-thread vectors multiplying against B
@@ -246,17 +246,21 @@ uniformity scope of the matrix. The scope impacts which operations can be
 performed on the matrix and may have performance implications depending on the
 implementation.
 
-There are two supported matrix scopes: `Thread` and `Wave`.
+There are three supported matrix scopes: `Thread`, `Wave`, and `ThreadGroup`.
 * The `Thread` matrix scope denotes that a matrix's values may vary by thread,
   which requires that an implementation handle divergent matrix values.
 * The `Wave` matrix scope denotes that a matrix's values are uniform across a
   wave, which allows an implementation to assume all instances of the matrix
   across a wave are identical.
+* The `ThreadGroup` matrix scope denotes that a matrix's values are uniform
+  across a thread group, which allows an implementation to assume all instances
+  of the matrix across a thread group are identical.
 
-Some operations require `Wave` scope matrices, while others can operate on
-`Thread` scope matrices. All operations that can operate on `Thread` scope
-matrices can also operate on `Wave` scope matrices, and there may be significant
-performance benefit when using `Wave` scope matrices.
+Operations are categorized by their scope requirements. Some operations require
+uniform scope matrices (`Wave` or`ThreadGroup`), while others can operate on
+non-uniform (`Thread`) scope matrices. Operations that support non-uniform
+scope also support uniform scopes.  There may be significant performance
+benefits when using uniform scope matrices.
 
 Throughout this document a matrix may be described as having a scope as
 specified by the `Scope` parameter (e.g. a matrix with `Scope == Thread` is a
@@ -297,6 +301,7 @@ enum class MatrixUse {
 enum class MatrixScope {
   Thread = 0,
   Wave = 1,
+  ThreadGroup = 2,
 };
 
 enum class UnaryOperation {
@@ -480,7 +485,7 @@ static Matrix Matrix::Splat(T Val);
 ```
 
 Constructs a matrix filled with the provided value casted to the element type.
-If the matrix is a `Wave` scope matrix, this operation shall behave equivalent
+If the matrix is a `Wave` or `ThreadGroup` scope matrix, this operation shall behave equivalent
 to:
 
 ```c++
@@ -552,7 +557,7 @@ void Matrix::SetRow(vector<ElementType, M> V, uint Index);
 ```
 
 Sets the specified matrix row to the value in the vector V. If the matrix scope
-is `Wave`, this behaves as if called as `SetRow(WaveReadLaneFirst(V), Index)`.
+is `Wave` or `ThreadGroup`, this behaves as if called as `SetRow(WaveReadLaneFirst(V), Index)`.
 If the `Index` is out of range of the matrix, this is a no-op.
 
 #### Matrix::Get(uint2)
@@ -577,7 +582,7 @@ Matrix::Set(ElementType V, uint2 Index);
 ```
 
 Sets a specified element of the matrix to the provided value. If the matrix
-scope is `Wave`, this behaves as if called as `Set(WaveReadLaneFirst(V), Index)`.
+scope is `Wave` or `ThreadGroup`, this behaves as if called as `Set(WaveReadLaneFirst(V), Index)`.
 If the `Index` is out of range, this is a no-op.
 
 #### Matrix::MultiplyAccumuate(Matrix, Matrix)
@@ -586,15 +591,15 @@ If the `Index` is out of range, this is a no-op.
 template <MatrixComponentType LHSTy, MatrixComponentType RHSTy, uint K,
           MatrixUse UseLocal = Use>
 typename hlsl::enable_if<Use == MatrixUse::Accumulator &&
-                             Scope == MatrixScope::Wave && UseLocal == Use,
+                             Scope != MatrixScope::Thread && UseLocal == Use,
                          void>::type
 Matrix::MultiplyAccumulate(const Matrix<LHSTy, M, K, MatrixUse::A, Scope>,
                            const Matrix<RHSTy, K, N, MatrixUse::B, Scope>);
 ```
 
-An accumulator matrix with wave scope has a method `MultiplyAccumulate` which
-takes as parameters an M x K A matrix with wave scope and a K x N B matrix with
-wave scope. The matrix arguments are multiplied against each other and added
+An accumulator matrix with wave or thread group scope has a method `MultiplyAccumulate` which
+takes as parameters an M x K A matrix with the same scope and a K x N B matrix with
+the same scope. The matrix arguments are multiplied against each other and added
 back into the implicit object accumulator matrix.
 
 #### Matrix::SumAccumulate(Matrix, Matrix)
@@ -603,14 +608,14 @@ back into the implicit object accumulator matrix.
 template <MatrixComponentType LHSTy, MatrixComponentType RHSTy, uint K,
           MatrixUse UseLocal = Use>
 typename hlsl::enable_if<Use == MatrixUse::Accumulator &&
-                             Scope == MatrixScope::Wave && UseLocal == Use,
+                             Scope != MatrixScope::Thread && UseLocal == Use,
                          void>::type
 Matrix::SumAccumulate(const Matrix<LHSTy, M, K, MatrixUse::A, Scope>,
                       const Matrix<RHSTy, K, N, MatrixUse::B, Scope>);
 ```
 
-An accumulator matrix with wave scope has a method `SumAccumulate` which takes
-as parameters an M x K A matrix with wave scope and a K x N B matrix with wave
+An accumulator matrix with wave or thread group scope has a method `SumAccumulate` which takes
+as parameters an M x K A matrix with the same scope and a K x N B matrix with the same
 scope. The matrix arguments are added together then added back into the implicit
 object accumulator matrix.
 
@@ -633,15 +638,15 @@ matrix.
 
 ```c++
 template <MatrixComponentType OutTy, MatrixComponentType ATy,
-          MatrixComponentType BTy, uint M, uint N, uint K>
-Matrix<OutTy, M, N, MatrixUse::Accumulator, MatrixScope::Wave>
-linalg::Multiply(const Matrix<T, M, K, MatrixUse::A, MatrixScope::Wave>,
-                 const Matrix<T, K, N, MatrixUse::B, MatrixScope::Wave>);
+          MatrixComponentType BTy, uint M, uint N, uint K, MatrixScope Scope>
+Matrix<OutTy, M, N, MatrixUse::Accumulator, Scope>
+linalg::Multiply(const Matrix<T, M, K, MatrixUse::A, Scope>,
+                 const Matrix<T, K, N, MatrixUse::B, Scope>);
 
 template <MatrixComponentType T, uint M, uint N, uint K>
-Matrix<T, M, N, MatrixUse::Accumulator, MatrixScope::Wave>
-linalg::Multiply(const Matrix<T, M, K, MatrixUse::A, MatrixScope::Wave>,
-                 const Matrix<T, K, N, MatrixUse::B, MatrixScope::Wave>);
+Matrix<T, M, N, MatrixUse::Accumulator, Scope>
+linalg::Multiply(const Matrix<T, M, K, MatrixUse::A, Scope>,
+                 const Matrix<T, K, N, MatrixUse::B, Scope>);
 ```
 
 The `linalg::Multiply` function has two overloads that take an MxK `Wave`-scope
@@ -696,6 +701,7 @@ enum class DXILMatrixUse {
 enum class DXILMatrixScope {
   Thread = 0,
   Wave = 1,
+  ThreadGroup = 2,
 };
 
 enum class DXILMatrixUnaryOperation {
@@ -879,7 +885,7 @@ Validation rules will enforce that:
 * argument A is an `A` matrix
 * argument B is a `B` matrix
 * argument C is an `Accumulator` matrix
-* All three matrices are `Wave` scope
+* All three matrices have the same scope (Wave or ThreadGroup)
 * Matrix A's dimensions shall be M x K
 * Matrix B's dimensions shall be K x N
 * Matrix C's dimensions shall be M x N
@@ -1048,6 +1054,7 @@ enum class MatrixUse {
 enum class MatrixScope {
   Thread = 0,
   Wave = 1,
+  ThreadGroup = 2,
 };
 
 enum class UnaryOperation {
@@ -1119,7 +1126,7 @@ class Matrix {
   template <MatrixComponentType LHSTy, MatrixComponentType RHSTy, uint K,
             MatrixUse UseLocal = Use>
   typename hlsl::enable_if<Use == MatrixUse::Accumulator &&
-                               Scope == MatrixScope::Wave && UseLocal == Use,
+                               Scope != MatrixScope::Thread && UseLocal == Use,
                            void>::type
   MultiplyAccumulate(const Matrix<LHSTy, M, K, MatrixUse::A, Scope>,
                      const Matrix<RHSTy, K, N, MatrixUse::B, Scope>);
@@ -1127,7 +1134,7 @@ class Matrix {
   template <MatrixComponentType LHSTy, MatrixComponentType RHSTy, uint K,
             MatrixUse UseLocal = Use>
   typename hlsl::enable_if<Use == MatrixUse::Accumulator &&
-                               Scope == MatrixScope::Wave && UseLocal == Use,
+                               Scope != MatrixScope::Thread && UseLocal == Use,
                            void>::type
   SumAccumulate(const Matrix<LHSTy, M, K, MatrixUse::A, Scope>,
                 const Matrix<RHSTy, K, N, MatrixUse::B, Scope>);
@@ -1140,15 +1147,15 @@ class Matrix {
 };
 
 template <MatrixComponentType OutTy, MatrixComponentType ATy,
-          MatrixComponentType BTy, uint M, uint N, uint K>
-Matrix<OutTy, M, N, MatrixUse::Accumulator, MatrixScope::Wave>
-Multiply(const Matrix<ATy, M, K, MatrixUse::A, MatrixScope::Wave>,
-         const Matrix<BTy, K, N, MatrixUse::B, MatrixScope::Wave>);
+          MatrixComponentType BTy, uint M, uint N, uint K, MatrixScope Scope>
+Matrix<OutTy, M, N, MatrixUse::Accumulator, Scope>
+Multiply(const Matrix<ATy, M, K, MatrixUse::A, Scope>,
+         const Matrix<BTy, K, N, MatrixUse::B, Scope>);
 
 template <MatrixComponentType T, uint M, uint N, uint K>
-Matrix<T, M, N, MatrixUse::Accumulator, MatrixScope::Wave>
-Multiply(const Matrix<T, M, K, MatrixUse::A, MatrixScope::Wave>,
-         const Matrix<T, K, N, MatrixUse::B, MatrixScope::Wave>);
+Matrix<T, M, N, MatrixUse::Accumulator, Scope>
+Multiply(const Matrix<T, M, K, MatrixUse::A, Scope>,
+         const Matrix<T, K, N, MatrixUse::B, Scope>);
 
 // Cooperative Vector Replacement API
 // Cooperative Vector operates on per-thread vectors multiplying against B
