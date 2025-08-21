@@ -262,6 +262,12 @@ non-uniform (`Thread`) scope matrices. Operations that support non-uniform
 scope also support uniform scopes.  There may be significant performance
 benefits when using uniform scope matrices.
 
+When using `ThreadGroup` scope matrices, explicit barriers are required only when
+there are actual cross-thread dependencies, such as when multiple threads
+contribute to building or modifying the matrix before it is used by other
+threads. The matrix scope semantics handle most synchronization automatically,
+eliminating the need for barriers between every matrix operation.
+
 Throughout this document a matrix may be described as having a scope as
 specified by the `Scope` parameter (e.g. a matrix with `Scope == Thread` is a
 _matrix with thread scope_).
